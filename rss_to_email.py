@@ -219,17 +219,6 @@ def output_to_console(article):
         print("\nContent:\n", article['content'])
     print("-" * 40)
 
-def append_to_file(filename, article):
-    """Append article information to a text file."""
-    with open(filename, "a", encoding="utf-8") as f:
-        f.write(f"Title: {article['title']}\n")
-        f.write(f"Author: {article['author']}\n")
-        f.write(f"Link: {article['link']}\n")
-        f.write(f"Estimated Reading Time: {article['reading_time']} min\n")
-        if article['content']:
-            f.write(f"\nContent:\n{article['content']}\n")
-        f.write("-" * 40 + "\n")
-
 def load_rss_feeds(file_path):
     """Load RSS feed URLs from a text file."""
     with open(file_path, "r", encoding="utf-8") as f:
@@ -370,7 +359,6 @@ if __name__ == "__main__":
                         help="Output format: email, console, or file (default: console)")
     parser.add_argument("--max_articles", type=int, default=1,
                         help="Maximum number of links to store and send per feed (default: 1)")
-    parser.add_argument("--file", type=str, help="File path to append output if using file mode")
     parser.add_argument("--credentials", type=str, default="credentials.json",
                         help="Path to a Gmail API credentials file")
     parser.add_argument("--to_email", type=str, help="Recipient email address")
@@ -390,8 +378,6 @@ if __name__ == "__main__":
         setup_mode(args)
         exit()
 
-    if args.output == "file" and not args.file:
-        parser.error("--file is required when using file output mode")
     if args.output == "email" and not os.path.exists(args.credentials):
         parser.error("--credentials is required when using email output mode")
     if args.output == "email" and not args.to_email:
@@ -415,5 +401,3 @@ if __name__ == "__main__":
                 send_email_with_gmail_api(args.to_email, args.from_email, article, args.credentials)
             elif args.output == "console":
                 output_to_console(article)
-            elif args.output == "file" and args.file:
-                append_to_file(args.file, article)
