@@ -230,8 +230,12 @@ def load_rss_feeds(file_path):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Fetch RSS articles and output via email, console, or file.")
+    parser.add_argument("feeds", type=str,
+                        help="Path to a text file containing RSS feed URLs")
     parser.add_argument("--output", choices=["email", "console", "file"], default="console",
                         help="Output format: email, console, or file (default: console)")
+    parser.add_argument("--max_articles", type=int, default=1,
+                        help="Maximum number of links to store and send per feed (default: 1)")
     parser.add_argument("--file", type=str, help="File path to append output if using file mode")
     parser.add_argument("--feeds", type=str, required=True,
                         help="Path to a text file containing RSS feed URLs")
