@@ -6,6 +6,7 @@ import os
 import base64
 import bleach
 import requests
+import logging
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 from email.mime.multipart import MIMEMultipart
@@ -197,9 +198,9 @@ def send_email_with_gmail_api(to_email, from_email, article):
 
     try:
         message_sent = service.users().messages().send(userId='me', body=body).execute()
-        print(f"Email sent to {to_email}, Message ID: {message_sent['id']}")
+        logging.info(f"Email sent to {to_email}, Message ID: {message_sent['id']}")
     except Exception as e:
-        print(f"An error occurred while sending the email: {e}")
+        logging.error(f"An error occurred while sending the email: {e}")
 
 def output_to_console(article):
     """Print article information to the console."""
@@ -250,6 +251,8 @@ if __name__ == "__main__":
         parser.error("Recipient email address is required when using email output mode")
     if args.output == "email" and not args.from_email:
         parser.error("Sender email address is required when using email output mode")
+
+    logging.basicConfig(level=logging.INFO)
 
     RSS_FEEDS = load_rss_feeds(args.feeds)
     
