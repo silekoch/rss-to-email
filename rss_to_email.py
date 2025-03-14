@@ -256,8 +256,6 @@ def create_plist_content(
         <array>
           <string>{python_path}</string>
           <string>{script_path}</string>
-
-          <string>--feeds</string>
           <string>{feeds_path}</string>
 
           <string>--output</string>
@@ -360,10 +358,10 @@ if __name__ == "__main__":
     parser.add_argument("--max_articles", type=int, default=1,
                         help="Maximum number of links to store and send per feed (default: 1)")
     parser.add_argument("--credentials", type=str, default="credentials.json",
-                        help="Path to a Gmail API credentials file")
+                        help="Path to a Gmail API credentials file, i.e. OAuth client ID JSON file")
     parser.add_argument("--to_email", type=str, help="Recipient email address")
     parser.add_argument("--from_email", type=str, help="Sender email address")
-    parser.add_argument("--setup", action="store_true", help="Run the Gmail API setup flow and generate a plist according to the arguments")
+    parser.add_argument("--setup", action="store_true", help="Run the Gmail API setup flow and generate a launchd plist according to the arguments")
     parser.add_argument("--interval", type=str, default=10800,
                         help="How often to run (in seconds) if generating a launchd plist. (default 10800 = 3 hours)")
     parser.add_argument("--python_path", type=str, default=None,
