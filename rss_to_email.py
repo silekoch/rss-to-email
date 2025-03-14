@@ -228,6 +228,7 @@ def create_plist_content(
     python_path,
     script_path,
     feeds_path,
+    credentials_path,
     to_email,
     from_email,
     max_articles,
@@ -260,6 +261,9 @@ def create_plist_content(
 
           <string>--output</string>
           <string>email</string>
+
+          <string>--credentials</string>
+          <string>{credentials_path}</string>
 
           <string>--to_email</string>
           <string>{to_email}</string>
@@ -315,6 +319,7 @@ def setup_mode(args):
         python_path=python_path,
         script_path=script_path,
         feeds_path=feeds_path,
+        credentials_path=args.credentials,
         to_email=to_email,
         from_email=from_email,
         max_articles=args.max_articles,
