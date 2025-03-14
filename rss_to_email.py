@@ -21,7 +21,7 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.send']
 ALLOWED_TAGS = [
     'p', 'br', 'strong', 'em', 'b', 'i', 'u', 'a',
     'ul', 'ol', 'li', 'blockquote', 'code', 'pre', 'h1', 'h2', 'h3',
-    'abbr', 'acronym',
+    'abbr', 'acronym', 'img',
 ]
 ALLOWED_ATTRIBUTES = {
     'a': ['href', 'title', 'target'],
