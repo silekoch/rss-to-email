@@ -1,17 +1,35 @@
 import feedparser
-import smtplib
 import html
 import argparse
 import json
 import os
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
+import base64
+import bleach
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
 
-# Adjust this to whatever maximum number of links you want to store per feed
-MAX_LINKS_PER_FEED = 5
+SCOPES = ['https://www.googleapis.com/auth/gmail.send']
+
+# Define which HTML tags, attributes, and styles you allow:
+ALLOWED_TAGS = [
+    'p', 'br', 'strong', 'em', 'b', 'i', 'u', 'a',
+    'ul', 'ol', 'li', 'blockquote', 'code', 'pre', 'h1', 'h2', 'h3',
+    'abbr', 'acronym',
+]
+ALLOWED_ATTRIBUTES = {
+    'a': ['href', 'title', 'target'],
+    'img': ['src', 'alt'],
+    'abbr': ['title'], 
+    'acronym': ['title'],
+}
+ALLOWED_PROTOCOLS = ['http', 'https', 'mailto']
 
 def get_reading_time_from_text(text):
     """Estimate reading time based on word count (assumes 200 wpm)."""
@@ -49,7 +67,7 @@ def save_seen_articles(seen_articles, filename="seen_articles.json"):
     with open(filename, "w", encoding="utf-8") as f:
         json.dump(seen_articles, f, indent=2)
 
-def fetch_rss_articles(feed_urls, seen_articles):
+def fetch_rss_articles(feed_urls, seen_articles, max_articles_per_feed):
     """
     Fetch articles from multiple RSS feeds and filter out those that are already seen.
     Each feed is tracked separately. We rotate out the oldest link if we exceed the max size.
@@ -65,9 +83,10 @@ def fetch_rss_articles(feed_urls, seen_articles):
         feed_domain = urlparse(feed_url).netloc  # Extract domain from feed URL
 
         new_seen_articles = []
-        for entry in feed.entries[:MAX_LINKS_PER_FEED]:
+        for entry in feed.entries[:max_articles_per_feed]:
             # Check if we've already seen this link for this feed
             if entry.link in seen_articles[feed_url]:
+                # If yes, we assume we've seen all the rest as well
                 break
 
             # Collect full content if available; otherwise, fallback
@@ -97,24 +116,46 @@ def fetch_rss_articles(feed_urls, seen_articles):
         seen_articles[feed_url] = new_seen_articles + seen_articles[feed_url]
 
         # Limit the number of seen articles per feed
-        seen_articles[feed_url] = seen_articles[feed_url][:MAX_LINKS_PER_FEED]
+        seen_articles[feed_url] = seen_articles[feed_url][:max_articles_per_feed]
 
     # Save after processing all feeds
     save_seen_articles(seen_articles)
     return articles
 
+def sanitize_html(input_html: str) -> str:
+    """
+    Sanitize the given HTML string, allowing only a limited set of tags, 
+    attributes, and protocols.
+    """
+    return bleach.clean(
+        input_html,
+        tags=ALLOWED_TAGS,
+        attributes=ALLOWED_ATTRIBUTES,
+        protocols=ALLOWED_PROTOCOLS,
+        strip=True  # remove disallowed tags entirely
+    )
+
 def format_email_content(article):
     """Format the email body content."""
-    content = f"<h2>{html.escape(article['title'])}</h2>"
-    content += f"<p><b>Author:</b> {html.escape(article['author'])}<br>"
+    # We escape certain fields that should remain plain text:
+    title_html = html.escape(article['title'])
+    author_html = html.escape(article['author'])
+    
+    # We sanitize content HTML, as we want some formatting here
+    content_html = ""
+    if article.get('content'):
+        content_html = sanitize_html(article['content'])
+
+    content = f"<h2>{title_html}</h2>"
+    content += f"<p><b>Author:</b> {author_html}<br>"
     content += f"<a href='{article['link']}'>{article['link']}</a><br>"
-    content += f"Estimated Reading Time: {article['reading_time']} min</p>"
+    content += f"<i>Estimated Reading Time: {article['reading_time']} min</i></p>"
     if article['content']:
-        content += f"<p>{html.escape(article['content'])}</p>"
+        content += f"<div>{content_html}</div>"
     return content
 
-def send_email(to_email, from_email, smtp_server, smtp_port, smtp_user, smtp_pass, article):
-    """Send an individual email per article."""
+def build_email(to_email, from_email, article):
+    """Build the email message."""
     msg = MIMEMultipart()
     msg['From'] = f"{article['author']} <{from_email}>"
     msg['To'] = to_email
@@ -122,11 +163,43 @@ def send_email(to_email, from_email, smtp_server, smtp_port, smtp_user, smtp_pas
     
     email_content = format_email_content(article)
     msg.attach(MIMEText(email_content, 'html'))
-    
-    with smtplib.SMTP(smtp_server, smtp_port) as server:
-        server.starttls()
-        server.login(smtp_user, smtp_pass)
-        server.sendmail(from_email, to_email, msg.as_string())
+    return msg
+
+def send_email_with_gmail_api(to_email, from_email, article):
+    """
+    Send an email via the Gmail API using OAuth 2.0.
+    """
+    # 1) Load / refresh credentials
+    creds = None
+    if os.path.exists('token.json'):
+        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file(
+                'credentials.json', SCOPES
+            )
+            creds = flow.run_local_server(port=0)
+        # Save the credentials for the next run
+        with open('token.json', 'w') as token:
+            token.write(creds.to_json())
+
+    # 2) Build the Gmail API service
+    service = build('gmail', 'v1', credentials=creds)
+
+    # 3) Build the email message
+    msg = build_email(to_email, from_email, article)
+
+    # 4) Encode and send
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+    body = {'raw': raw}
+
+    try:
+        message_sent = service.users().messages().send(userId='me', body=body).execute()
+        print(f"Email sent to {to_email}, Message ID: {message_sent['id']}")
+    except Exception as e:
+        print(f"An error occurred while sending the email: {e}")
 
 def output_to_console(article):
     """Print article information to the console."""
@@ -159,27 +232,37 @@ if __name__ == "__main__":
     parser.add_argument("--output", choices=["email", "console", "file"], default="console",
                         help="Output format: email, console, or file (default: console)")
     parser.add_argument("--file", type=str, help="File path to append output if using file mode")
-    parser.add_argument("--rss_file", type=str, required=True,
-                        help="Path to the text file containing RSS feed URLs")
+    parser.add_argument("--feeds", type=str, required=True,
+                        help="Path to a text file containing RSS feed URLs")
+    parser.add_argument("--credentials", type=str, default="credentials.json",
+                        help="Path to a Gmail API credentials file")
+    parser.add_argument("--to_email", type=str, help="Recipient email address")
+    parser.add_argument("--from_email", type=str, help="Sender email address")
+    parser.add_argument("--max_articles", type=int, default=1,
+                        help="Maximum number of links to store and send per feed (default: 1)")
     args = parser.parse_args()
 
-    RSS_FEEDS = load_rss_feeds(args.rss_file)
-    TO_EMAIL = "your_email@example.com"
-    FROM_EMAIL = "your_smtp_email@example.com"
-    SMTP_SERVER = "smtp.example.com"
-    SMTP_PORT = 587
-    SMTP_USER = "your_smtp_email@example.com"
-    SMTP_PASS = "your_smtp_password"
+    if args.output == "file" and not args.file:
+        parser.error("--file is required when using file output mode")
+    if args.output == "email" and not os.path.exists(args.credentials):
+        parser.error("--credentials is required when using email output mode")
+    if args.output == "email" and not args.to_email:
+        parser.error("Recipient email address is required when using email output mode")
+    if args.output == "email" and not args.from_email:
+        parser.error("Sender email address is required when using email output mode")
+
+    RSS_FEEDS = load_rss_feeds(args.feeds)
     
     # Load the dictionary that keeps seen articles per feed
     seen_articles = load_seen_articles()
+
     # Fetch new articles, marking them as seen in the dictionary
-    articles = fetch_rss_articles(RSS_FEEDS, seen_articles)
+    articles = fetch_rss_articles(RSS_FEEDS, seen_articles, args.max_articles)
 
     if articles:
         for article in articles:
             if args.output == "email":
-                send_email(TO_EMAIL, FROM_EMAIL, SMTP_SERVER, SMTP_PORT, SMTP_USER, SMTP_PASS, article)
+                send_email_with_gmail_api(args.to_email, args.from_email, article)
             elif args.output == "console":
                 output_to_console(article)
             elif args.output == "file" and args.file:
