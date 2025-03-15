@@ -154,10 +154,10 @@ Log files:
 
 ## Security & Privacy Considerations
 
-The script sanitizes HTML before sending to prevent malicious code injection.
-OAuth tokens (token.json) are stored locally and should not be shared.
-External images in emails may leak tracking information (can be disabled in email clients).
-If running on a shared machine, make sure permissions on token.json and credentials.json are restricted (chmod 600).
+- The script sanitizes HTML before sending to prevent malicious code injection.
+- OAuth tokens (token.json) are stored locally and should not be shared.
+- External images in emails may leak tracking information (can be disabled in email clients).
+- If running on a shared machine, make sure permissions on token.json and credentials.json are restricted (chmod 600).
 
 ## Troubleshooting
 
