@@ -121,9 +121,7 @@ def fetch_rss_articles(feed_urls, seen_articles, max_articles_per_feed):
         # Limit the number of seen articles per feed
         seen_articles[feed_url] = seen_articles[feed_url][:max_articles_per_feed]
 
-    # Save after processing all feeds
-    save_seen_articles(seen_articles)
-    return articles
+    return articles, seen_articles
 
 def sanitize_html(input_html: str) -> str:
     """
@@ -168,7 +166,7 @@ def build_email(to_email, from_email, article):
     msg.attach(MIMEText(email_content, 'html'))
     return msg
 
-def obtain_gmail_credentials(credentials_file="credentials.json"):
+def obtain_gmail_credentials(credentials_file):
     """Obtain Gmail API credentials interactively."""
     flow = InstalledAppFlow.from_client_secrets_file(
                 credentials_file, SCOPES
@@ -176,21 +174,21 @@ def obtain_gmail_credentials(credentials_file="credentials.json"):
     creds = flow.run_local_server(port=0)
     return creds
 
-def send_email_with_gmail_api(to_email, from_email, article, credentials_file="credentials.json"):
+def send_email_with_gmail_api(to_email, from_email, article, credentials_file, token_file):
     """
     Send an email via the Gmail API using OAuth 2.0.
     """
     # 1) Load / refresh credentials
     creds = None
-    if os.path.exists('token.json'):
-        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+    if os.path.exists(token_file):
+        creds = Credentials.from_authorized_user_file(token_file, SCOPES)
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
             creds = obtain_gmail_credentials(credentials_file)
         # Save the credentials for the next run
-        with open('token.json', 'w') as token:
+        with open(token_file, 'w') as token:
             token.write(creds.to_json())
 
     # 2) Build the Gmail API service
@@ -233,8 +231,9 @@ def create_plist_content(
     from_email,
     max_articles,
     interval,
+    app_data_dir,
     log_file,
-    error_log_file
+    error_log_file,
 ):
     """
     Return the content of the plist as a string, inserting the user-specified or default values
@@ -273,6 +272,9 @@ def create_plist_content(
 
           <string>--max_articles</string>
           <string>{max_articles}</string>
+
+          <string>--app_data_dir</string>
+          <string>{app_data_dir}</string>
         </array>
 
         <!-- StartInterval is in seconds (default: {interval} seconds) -->
@@ -303,27 +305,33 @@ def setup_mode(args):
     3) Runs the Gmail API OAuth flow to obtain & save credentials.
     """
     # 1) Gather arguments or prompt user if needed:
-    python_path = args.python_path or input("Enter the path to the Python binary: ")
-    script_path = args.script_path or str(Path(__file__).absolute())
-    script_dir = str(Path(script_path).parent)
-    feeds_path = args.feeds or os.path.join(script_dir, "feeds.txt")
+
+    # Transform to absolute paths for launchd plist
+    python_path = str(Path(args.python_path or input("Enter the path to the Python binary: ")).absolute())
+    script_path = str(Path(args.script_path or __file__).absolute())
+    script_dir = Path(script_path).parent
+    feeds_path = str(Path(args.feeds or script_dir / "feeds.txt").absolute())
+    credentials_path = str(Path(args.credentials).absolute())
+
     to_email = args.to_email or input("Enter the recipient email address: ")
     from_email = args.from_email or input("Enter the sender email address: ")
 
-    # Where do we store the logs? By default, same directory as script, or user can override
-    log_file = os.path.join(script_dir, "rss_to_email.log")
-    error_log_file = os.path.join(script_dir, "rss_to_email_error.log")
+    app_data_dir = Path(args.app_data_dir).absolute()
+    
+    log_file = app_data_dir / "rss_to_email.log"
+    error_log_file = app_data_dir / "rss_to_email_error.log"
 
     # 2) Create the plist content
     plist_content = create_plist_content(
         python_path=python_path,
         script_path=script_path,
         feeds_path=feeds_path,
-        credentials_path=args.credentials,
+        credentials_path=credentials_path,
         to_email=to_email,
         from_email=from_email,
         max_articles=args.max_articles,
         interval=args.interval,
+        app_data_dir=app_data_dir,
         log_file=log_file,
         error_log_file=error_log_file
     )
@@ -349,8 +357,9 @@ def setup_mode(args):
     # 5) Run Gmail API OAuth flow and save token.json
     #    (Ensure you have credentials.json in the same directory or specify path if needed)
     print("\nObtaining Gmail credentials. A browser window may open for sign-in...\n")
-    creds = obtain_gmail_credentials(credentials_file="credentials.json")
-    with open("token.json", "w") as token_file:
+    creds = obtain_gmail_credentials(credentials_file=args.credentials)
+    token_file = app_data_dir / "token.json"
+    with open(token_file, "w") as token_file:
         token_file.write(creds.to_json())
     print("token.json created successfully. Setup is complete.")
 
@@ -373,8 +382,14 @@ if __name__ == "__main__":
                         help="Path to python binary (if generating a launchd plist).")
     parser.add_argument("--script_path", type=str, default=None,
                         help="Path to this script (if generating a launchd plist).")
+    parser.add_argument("--app_data_dir", type=str, required=True,
+                        help="Path to the directory where the app data is stored.")
 
     args = parser.parse_args()
+
+    # Ensure the app data directory exists
+    app_data_dir = Path(args.app_data_dir)
+    app_data_dir.mkdir(parents=True, exist_ok=True)
 
     # If setup mode is requested, do that and then exit
     if args.setup:
@@ -393,14 +408,19 @@ if __name__ == "__main__":
     RSS_FEEDS = load_rss_feeds(args.feeds)
     
     # Load the dictionary that keeps seen articles per feed
-    seen_articles = load_seen_articles()
+    seen_articles_file = app_data_dir / "seen_articles.json"
+    seen_articles = load_seen_articles(seen_articles_file)
 
     # Fetch new articles, marking them as seen in the dictionary
-    articles = fetch_rss_articles(RSS_FEEDS, seen_articles, args.max_articles)
+    articles, seen_articles = fetch_rss_articles(RSS_FEEDS, seen_articles, args.max_articles)
+
+    # Save updated seen articles dictionary
+    save_seen_articles(seen_articles, seen_articles_file)
 
     if articles:
         for article in articles:
             if args.output == "email":
-                send_email_with_gmail_api(args.to_email, args.from_email, article, args.credentials)
+                token_file = app_data_dir / "token.json"
+                send_email_with_gmail_api(args.to_email, args.from_email, article, args.credentials, token_file)
             elif args.output == "console":
                 output_to_console(article)
