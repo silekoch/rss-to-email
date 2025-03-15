@@ -48,13 +48,13 @@ https://example.com/rss
 https://anotherexample.com/feed
 ```
 ### 2. Run the Script Manually
-Fetch and Display Articles in the Console
+Fetch and display articles in the console
 
 ```bash
 python rss_to_email.py feeds.txt --output console
 ```
 
-Fetch and Send Articles via Email
+Fetch and send articles via email
 
 ```
 python rss_to_email.py feeds.txt \
